@@ -4,47 +4,95 @@ import * as admin from "firebase-admin";
 import {ICompany} from "./companies/ICompany";
 import {CompanyFactory} from "./company-factory";
 
+// initialize the firebase admin sdk
 admin.initializeApp();
 
+// reference to the db for the factory methods
 export const db = admin.firestore();
 
-export const populateFirestore = functions.https.onRequest((request, response) => {
-  db.collection("users").add({
-    companyName: "compay name",
-    companyDesc: "company description",
-    firstName: "bob",
-    lastName: "smith",
-    email: "yee@bee.com",
-    phoneNumber: "123-444-2222",
-  });
-  response.send("Hello from test!");
-});
+// configurable function constants
+const NUM_OF_DOCS = 5;
+const REFRESH_MINS = 10;
 
-export const updateDashboard = functions.https.onRequest((request, response) => {
-  // in dashboard object
-  //  we would have a last updated property with the date stamp of the last time the dasboard was
-  //  updated
+/* updateDashboard Function
+ *----------------------------
+ * http function that takes a companyId in from query parameters
+ * and will either return the current dashboard if it exists and is
+ * within the update threshold, OR will fetch the corresponding data
+ * to create a new/updated dashboard.
+ */
+export const updateDashboard = functions.https.onRequest(async (request, response) => {
+  // get the companyId from the http query params
+  const companyId = (request.query.companyId as string) ?? "";
 
-  // Check when last updated
-  //  if last updated within [10 mins]
-  //  return
-
-
-  // resulting object:
-  /*
-  {
-    upcomingOrders: [5 latest order objects with state in-progress or open, ordered by date],
-    upcomingBills: [5 soonest bills, ordered by date],
-    projectedIncome: [use information from previous calculation to decide this]
-    mostPopularProducts: [top 5 ordered products],
-    inventorySituation: [top 5 lowest inventory stock],
+  // check to see if a company id was given
+  if (!companyId) {
+    response.status(401).json({message: "no company id given"});
+    return;
   }
-  */
 
-  response.send("Hello from test!");
+  // fetch the current dashboard document from firebase
+  const dashboard = (await db.collection("dashboard").doc(companyId).get()).data();
+  // create empty object to store result
+  let result = {};
+
+  // check to see if we need to update the dashboard
+  const lastUpdatedTime = ((dashboard?.lastUpdated as admin.firestore.Timestamp)?.seconds ?? admin.firestore.Timestamp.now().seconds);
+  const needsUpdating = lastUpdatedTime + (REFRESH_MINS * 3600) <= admin.firestore.Timestamp.now().seconds;
+
+
+  // Only fetch new data if dashboard is empty OR we are exceeding update threshold
+  if (!dashboard || Object.keys(dashboard).length === 0 || (dashboard && needsUpdating)) {
+    console.log("new");
+    // FETCH UPCOMING ORDERS
+    const orders = (await db.collection(`company/${companyId}/orders`).orderBy("dueDate", "asc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
+
+    // FETCH UPCOMING BILLS
+    const bills = (await db.collection(`company/${companyId}/bills`).where("dueDate", ">=", admin.firestore.Timestamp.now()).orderBy("dueDate", "asc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
+
+    // FETCH NUMBER OF PRODUCTS
+    const products = (await db.collection(`company/${companyId}/products`).orderBy("creationDate", "desc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
+
+    // FETCH NUMBER OF INVENTORY
+    const inventory = (await db.collection(`company/${companyId}/inventory`).orderBy("creationDate", "desc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
+
+    // sum the income from order
+    const income = orders.reduce((accum, item) => accum + item.price, 0);
+    // sum the debts from the bills
+    const debt = bills.reduce((accum, item) => accum + item.price, 0);
+    // calculate the income
+    const projectedIncome = income - debt;
+
+    // create dashboard object
+    result = {
+      upcomingOrders: orders,
+      upcomingBills: bills,
+      projectedIncome: projectedIncome,
+      latestProducts: products,
+      latestInventory: inventory,
+      lastUpdated: admin.firestore.Timestamp.now(),
+    };
+  } else {
+    // We do not need to refetch all the new data
+    result = dashboard; // return the current dashboard
+  }
+
+  // Finally create the dashboard in firestore
+  await db.collection("dashboard").doc(companyId).set(result);
+
+  // return the result
+  response.send(result);
 });
 
-
+/* createCompany Function
+ *----------------------------
+ * function that listens to creates in path /users/{userId}. This
+ * corresponds to a new user account being created. As such, this function
+ * will read the data from in the user doc and pass the information into the
+ * CompanyFactory. The CompanyFactory will then decide what type of company to
+ * create based upon the specified type. Will create a company document, cleanup
+ * the user document, and then finally will link the company doc to the user doc.
+ */
 export const createCompany = functions.firestore.document("/users/{userId}").onCreate(async (snapshot, context) => {
   // get the userId from the parameters (in braces above)
   const userId = context.params.userId;

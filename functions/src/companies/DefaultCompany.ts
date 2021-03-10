@@ -3,19 +3,26 @@ import {db} from "../index";
 import * as admin from "firebase-admin";
 
 /**
-   * Adds two numbers together.
+   * Default company handler for creating
+   * a company in Firebase on user creation
    */
 export class DefaultCompany implements ICompany {
   /**
-     * Adds two numbers together.
-     * @param {FirebaseFirestore.DocumentData} data asdsad
-     * @return {string} company id
+     * Creates the default company object with the given data
+     * @param {FirebaseFirestore.DocumentData} data user data from registration
+     * @return {string} company id of newly generated company
      */
   async createDocument(data: FirebaseFirestore.DocumentData): Promise<string> {
     console.log("Creating DefaultCompany");
 
-    // TODO: Error checking
+    // Error checking: see if company name provided
+    // shouldn't crash but warn us because this is not
+    // ideal
+    if (!data.companyName) {
+      console.warn("Company created without name!");
+    }
 
+    // create a new doc with template data in the company collection
     const doc = await db.collection("company").add({
       companyName: data.companyName ?? "",
       companyDesc: data.companyDesc ?? "",
@@ -30,11 +37,12 @@ export class DefaultCompany implements ICompany {
   }
 
   /**
-     * Adds two numbers together.
-     * @param {string} userId asdsad
-     * @return {void} asdsad
+     * Cleans up the user document after company doc is created
+     * @param {string} userId creator's user id
+     * @return {void} void
      */
   async cleanUser(userId: string): Promise<void> {
+    // remove the company data from the user document
     return new Promise((resolve, reject) => {
       db.collection("users").doc(userId).update({
         companyName: admin.firestore.FieldValue.delete(),
