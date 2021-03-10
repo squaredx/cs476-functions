@@ -43,7 +43,6 @@ export const updateDashboard = functions.https.onRequest(async (request, respons
 
   // Only fetch new data if dashboard is empty OR we are exceeding update threshold
   if (!dashboard || Object.keys(dashboard).length === 0 || (dashboard && needsUpdating)) {
-    console.log("new");
     // FETCH UPCOMING ORDERS
     const orders = (await db.collection(`company/${companyId}/orders`).orderBy("dueDate", "asc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
 
