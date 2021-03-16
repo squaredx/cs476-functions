@@ -21,14 +21,19 @@ const REFRESH_MINS = 10;
  * within the update threshold, OR will fetch the corresponding data
  * to create a new/updated dashboard.
  */
-export const updateDashboard = functions.https.onRequest(async (request, response) => {
-  // get the companyId from the http query params
-  const companyId = (request.query.companyId as string) ?? "";
+export const updateDashboard = functions.https.onCall(async (data, context) => {
+  // get the companyId from data
+  const companyId = (data.companyId as string) ?? "";
 
   // check to see if a company id was given
   if (!companyId) {
-    response.status(401).json({message: "no company id given"});
-    return;
+    throw new functions.https.HttpsError("invalid-argument", "The function must be called with companyId");
+  }
+
+  // check if auth
+  if (!context.auth) {
+    // Throwing an HttpsError so that the client gets the error details.
+    throw new functions.https.HttpsError("failed-precondition", "You must be logged in to call");
   }
 
   // fetch the current dashboard document from firebase
@@ -56,9 +61,9 @@ export const updateDashboard = functions.https.onRequest(async (request, respons
     const inventory = (await db.collection(`company/${companyId}/inventory`).orderBy("creationDate", "desc").limit(NUM_OF_DOCS).get()).docs.map((i) => i.data());
 
     // sum the income from order
-    const income = orders.reduce((accum, item) => accum + item.price, 0);
+    const income = orders.reduce((accum, item) => accum + item.price, 0) ?? 0;
     // sum the debts from the bills
-    const debt = bills.reduce((accum, item) => accum + item.price, 0);
+    const debt = bills.reduce((accum, item) => accum + item.price, 0) ?? 0;
     // calculate the income
     const projectedIncome = income - debt;
 
@@ -71,16 +76,15 @@ export const updateDashboard = functions.https.onRequest(async (request, respons
       latestInventory: inventory,
       lastUpdated: admin.firestore.Timestamp.now(),
     };
+    // update the dashboard contents
+    await db.collection("dashboard").doc(companyId).set(result);
   } else {
     // We do not need to refetch all the new data
     result = dashboard; // return the current dashboard
   }
 
-  // Finally create the dashboard in firestore
-  await db.collection("dashboard").doc(companyId).set(result);
-
   // return the result
-  response.send(result);
+  return result;
 });
 
 /* createCompany Function
@@ -118,7 +122,7 @@ export const createCompany = functions.firestore.document("/users/{userId}").onC
   // return ensure that we update the user id to remove company data and link the new document to
   // the user: https://firebase.google.com/docs/functions/firestore-events#writing_data
   return snapshot.ref.set({
-    companyLink: db.collection("users").doc(userId),
+    companyLink: db.collection("company").doc(companyId),
   }, {merge: true});
 });
 

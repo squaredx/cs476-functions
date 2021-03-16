@@ -26,6 +26,7 @@ export class DefaultCompany implements ICompany {
     const doc = await db.collection("company").add({
       companyName: data.companyName ?? "",
       companyDesc: data.companyDesc ?? "",
+      creationDate: admin.firestore.Timestamp.now(),
       numProducts: 0,
       numOrders: 0,
       numBills: 0,
